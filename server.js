@@ -18,6 +18,9 @@ db.connect()
 app.use(express.json())
 app.use(express.urlencoded ({extended: true}))
 
+app.get('/', function(req, res){
+    res.send('Hello World!')
+});
 
 //Login
 app.post('/api/login', function(req, res){
@@ -39,6 +42,17 @@ app.post('/api/login', function(req, res){
     })    
 } )
 
+
+// Register
+app.post('/api/register', function(req, res){  
+    const { username, password, firstName, lastName } = req.body;
+    const sql = 'INSERT INTO customer (username, password, firstName, lastName) VALUES (?, ?, ?, ?)';
+    
+    db.query(sql, [username, password, firstName, lastName], function(err, result){
+      if (err) throw err;  
+      res.send({'message':'ลงทะเบียนสำเร็จแล้ว','status':true});
+    })
+})
 
 
 //Web server
