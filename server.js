@@ -11,6 +11,7 @@ const SECRET_KEY = 'UX23Y24%@&2aMb';
 
 const fileupload = require('express-fileupload');
 const path = require('path');
+const crypto = require('crypto');
 
 // Load SSL certificates
 const privateKey = fs.readFileSync('privatekey.pem', 'utf8');
@@ -43,7 +44,7 @@ app.get('/', function(req, res){
 });
 
 
-
+/*############## CUSTOMER ##############*/
 // Register
 app.post('/api/register', 
     function(req, res) {  
@@ -155,6 +156,30 @@ function query(sql, params) {
     });
 }
 
+// List customers
+app.get('/api/customer',
+    function(req, res){             
+        const token = req.headers["authorization"].replace("Bearer ", "");
+            
+        try{
+            let decode = jwt.verify(token, SECRET_KEY);               
+            if(decode.positionID != 1 && decode.positionID != 2) {
+              return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+            }
+            
+            let sql = "SELECT * FROM customer";            
+            db.query(sql, function (err, result){
+                if (err) throw err;            
+                res.send(result);
+            });      
+
+        }catch(error){
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+        }
+        
+    }
+);
+
 
 // Profile
 app.get('/api/profile/:id',
@@ -164,8 +189,8 @@ app.get('/api/profile/:id',
             
         try{
             let decode = jwt.verify(token, SECRET_KEY);               
-            if(custID != decode.custID) {
-              return res.send( {'message':'Id is not matched','status':false} );
+            if(custID != decode.custID && decode.positionID != 1 && decode.positionID != 2) {
+              return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
             }
             
             let sql = "SELECT * FROM customer WHERE custID = ? AND isActive = 1";        
@@ -177,7 +202,7 @@ app.get('/api/profile/:id',
             res.send(customer); 
 
         }catch(error){
-            res.send( {'message':'Token is invalid','status':false} );
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
         }
         
     }
@@ -202,8 +227,8 @@ app.put('/api/customer/:id',
         try{
             //Validate the token    
             let decode = jwt.verify(token, SECRET_KEY);               
-            if(custID != decode.custID) {
-                return res.send( {'message':'Id is not matched','status':false} );
+            if(custID != decode.custID && decode.positionID != 1 && decode.positionID != 2) {
+                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
             }
         
             //save file into folder  
@@ -244,42 +269,496 @@ app.put('/api/customer/:id',
             sql += ' WHERE custID = ?';
             params.push(custID);
         
-            connection.query(sql, params, (err, result) => {
+            db.query(sql, params, (err, result) => {
                 if (err) throw err;
-        
-                res.send({ 'message': 'update a user successfully', 'status': true });
+                res.send({ 'message': 'แก้ไขข้อมูลลูกค้าเรียบร้อยแล้ว', 'status': true });
             });
             
         }catch(error){
-            res.send( {'message':'Token is invalid','status':false} );
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
         }    
     }
 );
     
-  // Delete a customer
-  app.delete('/api/customer/:id',
+// Delete a customer
+app.delete('/api/customer/:id',
     async function(req, res){
-          const custID = req.params.id;        
-          const token = req.headers["authorization"].replace("Bearer ", "");
-              
-          try{
-              let decode = jwt.verify(token, SECRET_KEY);               
-              if(custID != decode.custID) {
-                return res.send( {'message':'Id is not matched','status':false} );
-              }
-              
-              const sql = `DELETE FROM customer WHERE custID = ?`;
-              connection.query(sql, [req.params.id], (err, result) => {
+        const custID = req.params.id;        
+        const token = req.headers["authorization"].replace("Bearer ", "");
+            
+        try{
+            let decode = jwt.verify(token, SECRET_KEY);               
+            if(custID != decode.custID && decode.positionID != 1 && decode.positionID != 2) {
+                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+            }
+            
+            const sql = `DELETE FROM customer WHERE custID = ?`;
+            db.query(sql, [custID], (err, result) => {
                 if (err) throw err;
-                res.send({'message':'ลบข้อมูลเรียบร้อยแล้ว','status':true});
-              });
+                res.send({'message':'ลบข้อมูลลูกค้าเรียบร้อยแล้ว','status':true});
+            });
+
+        }catch(error){
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+        }
+        
+    }
+);
+
+
+/*############## EMPLOYEE ##############*/
+//Login (employee/admin)
+app.post('/api/admin/login',
+    async function(req, res){
+        //Validate username
+        const {username, password} = req.body;                
+        let sql = "SELECT * FROM employee WHERE username=? AND isActive = 1";        
+        let employee = await query(sql, [username, username]);        
+        
+        if(employee.length <= 0){            
+            return res.send( {'message':'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง','status':false} );
+        }else{            
+            employee = employee[0];
+            empID = employee['empID'];               
+            password_hash = employee['password'];       
+            positionID = employee['positionID']; 
+        }
+
+        //validate a number of attempts 
+        let loginAttempt = 0;
+        sql = "SELECT loginAttempt FROM employee WHERE username=? AND isActive = 1 ";        
+        sql += "AND lastAttemptTime >= CURRENT_TIMESTAMP - INTERVAL 24 HOUR ";        
+        
+        row = await query(sql, [username, username]);    
+        if(row.length > 0){
+            loginAttempt = row[0]['loginAttempt'];
+
+            if(loginAttempt>= 3) {
+                return res.send( {'message':'บัญชีคุณถูกล๊อก เนื่องจากมีการพยายามเข้าสู่ระบบเกินกำหนด','status':false} );    
+            }    
+        }else{
+            //reset login attempt                
+            sql = "UPDATE employee SET loginAttempt = 0, lastAttemptTime=NULL WHERE username=? AND isActive = 1";                    
+            await query(sql, [username, username]);               
+        }              
+        
+
+        //validate password       
+        if(bcrypt.compareSync(password, password_hash)){
+            //reset login attempt                
+            sql = "UPDATE employee SET loginAttempt = 0, lastAttemptTime=NULL WHERE username=? AND isActive = 1";        
+            await query(sql, [username, username]);   
+
+            //get token
+            const token = jwt.sign({ empID: empID, username: username, positionID: positionID }, 
+                                    SECRET_KEY, { expiresIn: '1h' });                
+
+            employee['token'] = token;
+            employee['message'] = 'เข้าสู่ระบบสำเร็จ';
+            employee['status'] = true;
+
+            res.send(employee);            
+        }else{
+            //update login attempt
+            const lastAttemptTime = new Date();
+            sql = "UPDATE employee SET loginAttempt = loginAttempt + 1, lastAttemptTime=? ";
+            sql += "WHERE username=? AND isActive = 1";                   
+            await query(sql, [lastAttemptTime, username, username]);           
+            
+            if(loginAttempt >=2){
+                res.send( {'message':'บัญชีคุณถูกล๊อก เนื่องจากมีการพยายามเข้าสู่ระบบเกินกำหนด','status':false} );    
+            }else{
+                res.send( {'message':'ชื่อผู้ใช้หรือรหัสผ่านไม่ถูกต้อง','status':false} );    
+            }            
+        }
+
+    }
+);
+
+//List employees
+app.get('/api/employee',
+    function(req, res){             
+        const token = req.headers["authorization"].replace("Bearer ", "");
+            
+        try{
+            let decode = jwt.verify(token, SECRET_KEY);               
+            if(decode.positionID != 1) {
+              return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+            }
+            
+            let sql = "SELECT * FROM employee";            
+            db.query(sql, function (err, result){
+                if (err) throw err;            
+                res.send(result);
+            });      
+
+        }catch(error){
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+        }
+        
+    }
+);
+
+//Show an employee detail
+app.get('/api/employee/:id',
+    async function(req, res){
+        const empID = req.params.id;        
+        const token = req.headers["authorization"].replace("Bearer ", "");
+            
+        try{
+            let decode = jwt.verify(token, SECRET_KEY);               
+            if(empID != decode.empID && decode.positionID != 1) {
+              return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+            }
+            
+            let sql = "SELECT * FROM employee WHERE empID = ? AND isActive = 1";        
+            let employee = await query(sql, [empID]);        
+            
+            employee = employee[0];
+            employee['message'] = 'success';
+            employee['status'] = true;
+            res.send(employee); 
+
+        }catch(error){
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+        }
+        
+    }
+);
+
+
+//Generate a password
+function generateRandomPassword(length) {
+    return crypto
+        .randomBytes(length)
+        .toString('base64')
+        .slice(0, length)
+        .replace(/\+/g, 'A')  // Replace '+' to avoid special chars if needed
+        .replace(/\//g, 'B'); // Replace '/' to avoid special chars if needed
+}
+
+
+//Add an employee
+app.post('/api/employee', 
+    async function(req, res){
   
-          }catch(error){
-              res.send( {'message':'Token is invalid','status':false} );
-          }
-          
-      }
-  );
+        //Receive a token
+        const token = req.headers["authorization"].replace("Bearer ", "");        
+    
+        try{
+            //Validate the token    
+            let decode = jwt.verify(token, SECRET_KEY);               
+            if(decode.positionID != 1) {
+                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+            }            
+
+            //receive data from users
+            const {username, firstName, lastName, email, gender } = req.body;
+
+            //check existing username
+            let sql="SELECT * FROM employee WHERE username=?";
+            db.query(sql, [username], async function(err, results) {
+                if (err) throw err;
+                
+                if(results.length == 0) {
+                    //password and salt are encrypted by hash function (bcrypt)
+                    const password = generateRandomPassword(8);
+                    const salt = await bcrypt.genSalt(10); //generate salte
+                    const password_hash = await bcrypt.hash(password, salt);    
+                    
+                    //save data into database                
+                    let sql = `INSERT INTO employee(
+                            username, password, firstName, lastName, email, gender
+                            )VALUES(?, ?, ?, ?, ?, ?)`;   
+                    let params = [username, password_hash, firstName, lastName, email, gender];
+                
+                    db.query(sql, params, (err, result) => {
+                        if (err) throw err;
+                        res.send({ 'message': 'เพิ่มข้อมูลพนักงานเรียบร้อยแล้ว', 'status': true });
+                    });                    
+
+                }else{
+                    res.send({'message':'ชื่อผู้ใช้ซ้ำ','status':false});
+                }
+            });                        
+            
+        }catch(error){
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+        }    
+    }
+);
+    
+//Update an employee
+app.put('/api/employee/:id', 
+    async function(req, res){
+  
+        //Receive a token
+        const token = req.headers["authorization"].replace("Bearer ", "");
+        const empID = req.params.id;
+    
+        try{
+            //Validate the token    
+            let decode = jwt.verify(token, SECRET_KEY);               
+            if(empID != decode.empID && decode.positionID != 1) {
+                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+            }
+        
+            //save file into folder  
+            let fileName = "";
+            if (req?.files?.imageFile){        
+                const imageFile = req.files.imageFile; // image file    
+                
+                fileName = imageFile.name.split(".");// file name
+                fileName = fileName[0] + Date.now() + '.' + fileName[1]; 
+        
+                const imagePath = path.join(__dirname, 'assets/employee', fileName); //image path
+        
+                fs.writeFile(imagePath, imageFile.data, (err) => {
+                if(err) throw err;
+                });
+                
+            }
+            
+            //save data into database
+            const {password, username, firstName, lastName, email, gender } = req.body;
+        
+            let sql = 'UPDATE employee SET username = ?,firstName = ?, lastName = ?, email = ?, gender = ?';
+            let params = [username, firstName, lastName, email, gender];
+        
+            if (password) {
+                const salt = await bcrypt.genSalt(10);
+                const password_hash = await bcrypt.hash(password, salt);   
+                sql += ', password = ?';
+                params.push(password_hash);
+            }
+        
+            if (fileName != "") {    
+                sql += ', imageFile = ?';
+                params.push(fileName);
+            }
+        
+            sql += ' WHERE empID = ?';
+            params.push(empID);
+        
+            db.query(sql, params, (err, result) => {
+                if (err) throw err;
+                res.send({ 'message': 'แก้ไขข้อมูลพนักงานเรียบร้อยแล้ว', 'status': true });
+            });
+            
+        }catch(error){
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+        }    
+    }
+);
+    
+// Delete an employee
+app.delete('/api/employee/:id',
+    async function(req, res){
+        const empID = req.params.id;        
+        const token = req.headers["authorization"].replace("Bearer ", "");
+            
+        try{
+            let decode = jwt.verify(token, SECRET_KEY);               
+            if(decode.positionID != 1) {
+                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+            }
+            
+            const sql = `DELETE FROM employee WHERE empID = ?`;
+            db.query(sql, [empID], (err, result) => {
+                if (err) throw err;
+                res.send({'message':'ลบข้อมูลพนักงานเรียบร้อยแล้ว','status':true});
+            });
+
+        }catch(error){
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+        }
+        
+    }
+);
+
+
+
+/*############## PRODUCT ##############*/
+//List products
+app.get('/api/product',
+    function(req, res){             
+        const token = req.headers["authorization"].replace("Bearer ", "");
+            
+        try{
+            let decode = jwt.verify(token, SECRET_KEY);               
+            if(decode.positionID != 1 && decode.positionID != 2) {
+              return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+            }
+            
+            let sql = "SELECT * FROM product";            
+            db.query(sql, function (err, result){
+                if (err) throw err;            
+                res.send(result);
+            });      
+
+        }catch(error){
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+        }
+        
+    }
+);
+
+// Get product detail
+app.get('/api/product/:id', 
+    function (req, res){
+        const sql = 'SELECT * FROM product WHERE productID = ?';
+        db.query(sql, [req.params.id], (err, result) => {
+            if (err) throw err;
+
+            if(result.length > 0) {
+                product = result[0];
+                product['message'] = 'success';
+                product['status'] = true;
+                res.json(product);
+            }else{
+                res.send({'message':'ไม่พบข้อมูลสินค้า','status':false});
+            }
+        });
+    }
+);
+
+// show product image
+app.get('/assets/product/:filename', 
+    function(req, res){
+      const filepath = path.join(__dirname, 'assets/product', req.params.filename);  
+      res.sendFile(filepath);
+    }
+);
+
+
+//Add a product
+app.post('/api/product', 
+    async function(req, res){
+  
+        //Receive a token
+        const token = req.headers["authorization"].replace("Bearer ", "");        
+    
+        try{
+            //Validate the token    
+            let decode = jwt.verify(token, SECRET_KEY);               
+            if(decode.positionID != 1 && decode.positionID != 2) {
+                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+            }
+        
+            //save file into folder  
+            let fileName = "";
+            const imageFile = req.files.imageFile; // image file    
+            
+            fileName = imageFile.name.split(".");// file name
+            fileName = fileName[0] + Date.now() + '.' + fileName[1]; 
+    
+            const imagePath = path.join(__dirname, 'assets/product', fileName); //image path
+    
+            fs.writeFile(imagePath, imageFile.data, (err) => {
+            if(err) throw err;
+            });
+            
+            //save data into database
+            const {productName, productDetail, price, cost, quantity, typeID} = req.body;
+        
+            let sql = `INSERT INTO product(
+                       productName, productDetail, price, cost, quantity, imageFile, typeID
+                       )VALUES(?, ?, ?, ?, ?, ?, ?)`;                
+            let params = [productName, productDetail, price, cost, quantity, fileName, typeID];            
+        
+            db.query(sql, params, (err, result) => {
+                if (err) throw err;
+                res.send({ 'message': 'เพิ่มข้อมูลสินค้าเรียบร้อยแล้ว', 'status': true });
+            });
+            
+        }catch(error){
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+        }    
+    }
+);
+    
+//Update a product
+app.put('/api/product/:id', 
+    async function(req, res){
+  
+        //Receive a token
+        const token = req.headers["authorization"].replace("Bearer ", "");
+        const productID = req.params.id;
+    
+        try{
+            //Validate the token    
+            let decode = jwt.verify(token, SECRET_KEY);               
+            if(decode.positionID != 1 && decode.positionID != 2) {
+                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+            }
+        
+            //save file into folder  
+            let fileName = "";
+            if (req?.files?.imageFile){        
+                const imageFile = req.files.imageFile; // image file    
+                
+                fileName = imageFile.name.split(".");// file name
+                fileName = fileName[0] + Date.now() + '.' + fileName[1]; 
+        
+                const imagePath = path.join(__dirname, 'assets/product', fileName); //image path
+        
+                fs.writeFile(imagePath, imageFile.data, (err) => {
+                if(err) throw err;
+                });
+                
+            }
+            
+            //save data into database
+            const {productName, productDetail, price, cost, quantity, typeID} = req.body;
+        
+            let sql = `UPDATE product SET 
+                       productName = ?, productDetail = ?, price = ?, cost = ?, quantity = ?, typeID = ?`;
+            let params = [productName, productDetail, price, cost, quantity, typeID];
+        
+            if (fileName != "") {    
+                sql += ', imageFile = ?';
+                params.push(fileName);
+            }
+        
+            sql += ' WHERE productID = ?';
+            params.push(productID);
+        
+            db.query(sql, params, (err, result) => {
+                if (err) throw err;
+                res.send({ 'message': 'แก้ไขข้อมูลสินค้าเรียบร้อยแล้ว', 'status': true });
+            });
+            
+        }catch(error){
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+        }    
+    }
+);
+    
+// Delete a product
+app.delete('/api/product/:id',
+    async function(req, res){
+        const productID = req.params.id;        
+        const token = req.headers["authorization"].replace("Bearer ", "");
+            
+        try{
+            let decode = jwt.verify(token, SECRET_KEY);               
+            if(decode.positionID != 1 && decode.positionID != 2) {
+                return res.send( {'message':'คุณไม่ได้รับสิทธิ์ในการเข้าใช้งาน','status':false} );
+            }
+            
+            const sql = 'DELETE FROM product WHERE productID = ?';
+            db.query(sql, [productID], (err, result) => {
+                if (err) throw err;
+                res.send({'message':'ลบข้อมูลสินค้าเรียบร้อยแล้ว','status':true});
+            });
+
+        }catch(error){
+            res.send( {'message':'โทเคนไม่ถูกต้อง','status':false} );
+        }
+        
+    }
+);
+
 
 // Create an HTTPS server
 const httpsServer = https.createServer(credentials, app);
