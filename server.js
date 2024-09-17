@@ -48,32 +48,34 @@ app.get('/', function(req, res){
 // Register
 app.post('/api/register', 
     function(req, res) {  
-        const { username, password, firstName, lastName } = req.body;
+        const { username, password, firstName, lastName, positionID } = req.body;
+        // If positionID is not provided, set a default value
+        const posID = positionID || 3; // Replace 3 with the appropriate default ID
         
-        //check existing username
-        let sql="SELECT * FROM customer WHERE username=?";
+        // Check existing username
+        let sql = "SELECT * FROM admin WHERE username=?";
         db.query(sql, [username], async function(err, results) {
             if (err) throw err;
             
-            if(results.length == 0) {
-                //password and salt are encrypted by hash function (bcrypt)
-                const salt = await bcrypt.genSalt(10); //generate salte
+            if (results.length == 0) {
+                // Encrypt password
+                const salt = await bcrypt.genSalt(10);
                 const password_hash = await bcrypt.hash(password, salt);        
                                 
-                //insert customer data into the database
-                sql = 'INSERT INTO customer (username, password, firstName, lastName) VALUES (?, ?, ?, ?)';
-                db.query(sql, [username, password_hash, firstName, lastName], (err, result) => {
+                // Insert employee data into the database
+                sql = 'INSERT INTO admin (username, password, firstName, lastName, positionID) VALUES (?, ?, ?, ?, ?)';
+                db.query(sql, [username, password_hash, firstName, lastName, posID], (err, result) => {
                     if (err) throw err;
                 
-                    res.send({'message':'ลงทะเบียนสำเร็จแล้ว','status':true});
+                    res.send({'message': 'ลงทะเบียนสำเร็จแล้ว', 'status': true});
                 });      
-            }else{
-                res.send({'message':'ชื่อผู้ใช้ซ้ำ','status':false});
+            } else {
+                res.send({'message': 'ชื่อผู้ใช้ซ้ำ', 'status': false});
             }
-
         });      
     }
 );
+
 
 
 //Login
@@ -312,7 +314,7 @@ app.post('/api/admin/login',
     async function(req, res){
         //Validate username
         const {username, password} = req.body;                
-        let sql = "SELECT * FROM employee WHERE username=? AND isActive = 1";        
+        let sql = "SELECT * FROM admin WHERE username=? AND isActive = 1";        
         let employee = await query(sql, [username, username]);        
         
         if(employee.length <= 0){            
@@ -326,7 +328,7 @@ app.post('/api/admin/login',
 
         //validate a number of attempts 
         let loginAttempt = 0;
-        sql = "SELECT loginAttempt FROM employee WHERE username=? AND isActive = 1 ";        
+        sql = "SELECT loginAttempt FROM admin WHERE username=? AND isActive = 1 ";        
         sql += "AND lastAttemptTime >= CURRENT_TIMESTAMP - INTERVAL 24 HOUR ";        
         
         row = await query(sql, [username, username]);    
@@ -338,7 +340,7 @@ app.post('/api/admin/login',
             }    
         }else{
             //reset login attempt                
-            sql = "UPDATE employee SET loginAttempt = 0, lastAttemptTime=NULL WHERE username=? AND isActive = 1";                    
+            sql = "UPDATE admin SET loginAttempt = 0, lastAttemptTime=NULL WHERE username=? AND isActive = 1";                    
             await query(sql, [username, username]);               
         }              
         
@@ -346,7 +348,7 @@ app.post('/api/admin/login',
         //validate password       
         if(bcrypt.compareSync(password, password_hash)){
             //reset login attempt                
-            sql = "UPDATE employee SET loginAttempt = 0, lastAttemptTime=NULL WHERE username=? AND isActive = 1";        
+            sql = "UPDATE admin SET loginAttempt = 0, lastAttemptTime=NULL WHERE username=? AND isActive = 1";        
             await query(sql, [username, username]);   
 
             //get token
@@ -361,7 +363,7 @@ app.post('/api/admin/login',
         }else{
             //update login attempt
             const lastAttemptTime = new Date();
-            sql = "UPDATE employee SET loginAttempt = loginAttempt + 1, lastAttemptTime=? ";
+            sql = "UPDATE admin SET loginAttempt = loginAttempt + 1, lastAttemptTime=? ";
             sql += "WHERE username=? AND isActive = 1";                   
             await query(sql, [lastAttemptTime, username, username]);           
             
